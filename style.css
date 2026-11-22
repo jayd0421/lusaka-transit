@@ -10,14 +10,6 @@ input, button, select, textarea {
   font-family: inherit;
 }
 
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-}
-
 body, html {
   width: 100%;
   height: 100%;
@@ -479,4 +471,30 @@ button:hover {
 
 .sidebar.collapsed .sidebar-footer {
   display: none;
+}
+/* Keep the origin input and both buttons in one row */
+.origin-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Let the input use the remaining space */
+.origin-box input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+/* Override the existing absolute button positioning */
+.origin-box .locate-btn,
+.origin-box .swap-btn {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+}
+
+/* Keep the swap hover effect without moving the button */
+.origin-box .swap-btn:hover {
+  transform: rotate(180deg);
 }
