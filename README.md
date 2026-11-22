@@ -3,6 +3,9 @@
 An interactive, client-side web map and transit route planner for Lusaka, Zambia. Built with **MapLibre GL JS**, **OpenFreeMap**, and **Turf.js**, it allows commuters and urban planners to explore informal and formal bus corridors, inspect stops, and compute direct or 1-transfer itineraries directly in the browser—with zero backend servers or API tokens required.
 
 🔗 **Live Demo:** [[https://github.io](https://jayd0421.github.io/lusaka-transit/)]([https://github.io](https://jayd0421.github.io/lusaka-transit/))
+🔗 **Live Demo:** [https://github.io](https://github.io)
+
+[![Lusaka Public Transport Route Finder Preview](assets/preview.png)](https://github.io)
 
 ---
 
@@ -13,7 +16,8 @@ An interactive, client-side web map and transit route planner for Lusaka, Zambia
 - **Multiple Input Methods:**
   - Click anywhere on the map to drop **Origin (A)** and **Destination (B)** pins.
   - Type to search and autocomplete from all mapped Lusaka bus stops.
-  - Use **Live GPS Geolocation** (`📍`) to route from your current position.
+  - Use **Live GPS Geolocation** (<img src="assets/location-crosshairs.svg" width="14" height="14" alt="Location Crosshairs" />) to route from your current position.
+
   - One-click **Swap (`⇅`)** button to reverse origin and destination for return trips.
 - **Interactive Map Inspection:**
   - Click any bus stop to view all routes serving that stop and set it as your destination with a **"Go here"** button.
