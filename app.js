@@ -98,7 +98,7 @@ function populateStopAutocomplete() {
 // 3. Precompute which stops lie within 300m of each route and their distance along the route
 // + Filter which stops physically sit on the correct side of each route
 function buildRouteStopIndex() {
-  const maxSnapKm = 0.045; // 5 meters max distance from the route centerline
+  const maxSnapKm = 0.005; // 5 meters max distance from the route centerline
 
   routeStopIndex = tripsData.features
     .filter(f => f.geometry && f.geometry.type === 'LineString')
