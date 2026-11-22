@@ -98,7 +98,7 @@ function populateStopAutocomplete() {
 // 3. Precompute which stops lie within 300m of each route and their distance along the route
 // + Filter which stops physically sit on the correct side of each route
 function buildRouteStopIndex() {
-  const maxSnapKm = 0.005; // 5 meters max distance from the route centerline
+  const maxSnapKm = 0.045; // 5 meters max distance from the route centerline
 
   routeStopIndex = tripsData.features
     .filter(f => f.geometry && f.geometry.type === 'LineString')
@@ -196,7 +196,7 @@ function initMapLayers() {
     }
   });
 
-  // Highlighted active journey (Leg 1 = Blue, Leg 2 = Orange)
+  // Highlighted active journey (Trip 1 = Blue, Trip 2 = Orange)
   map.addLayer({
     id: 'selected-route-layer',
     type: 'line',
@@ -688,11 +688,11 @@ function renderResults(itineraries) {
 
     const title = item.transfers === 0
       ? 'Direct: ' + item.legs[0].route
-      : '1 Transfer: ' + item.legs[0].route + ' → ' + item.legs[1].route;
+      : 'Transfer: ' + item.legs[0].route + ' → ' + item.legs[1].route;
 
     const legsHtml = item.legs.map((leg, i) =>
       '<div style="margin-top:4px;">' +
-        '<strong>Leg ' + (i + 1) + ':</strong> ' + leg.route + '<br/>' +
+        '<strong>Trip ' + (i + 1) + ':</strong> ' + leg.route + '<br/>' +
         'Bus: ' + (leg.bus || 'Bus') + ' (' + (leg.capacity || 'N/A') + ')<br/>' +
         'Board: <em>' + leg.board + '</em> → Dropoff: <em>' + leg.alight + '</em>' +
         '<div class="stops-list">Stops (' + leg.stops.length + '): ' + leg.stops.join(' → ') + '</div>' +
@@ -737,5 +737,3 @@ function highlightItinerary(item) {
 
   map.fitBounds(bbox, { padding: padding, maxZoom: 15 });
 }
-
-
