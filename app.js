@@ -561,6 +561,7 @@ function findRoutes(orig, dest) {
             route: b.entry.trip.properties.route_long,
             bus: b.entry.trip.properties.vehicle_name,
             capacity: b.entry.trip.properties.passenger_capacity,
+            fare: b.entry.trip.properties.fare ?? null,
             board: b.stop.name,
             alight: a.stop.name,
             stops: stopsBetween
@@ -637,6 +638,7 @@ function findRoutes(orig, dest) {
                     route: b.entry.trip.properties.route_long,
                     bus: b.entry.trip.properties.vehicle_name,
                     capacity: b.entry.trip.properties.passenger_capacity,
+                    fare: b.entry.trip.properties.fare ?? null,
                     board: b.stop.name,
                     alight: s1.name,
                     stops: stops1
@@ -645,6 +647,7 @@ function findRoutes(orig, dest) {
                     route: a.entry.trip.properties.route_long,
                     bus: a.entry.trip.properties.vehicle_name,
                     capacity: a.entry.trip.properties.passenger_capacity,
+                    fare: a.entry.trip.properties.fare ?? null,
                     board: s2.name,
                     alight: a.stop.name,
                     stops: stops2
@@ -719,6 +722,9 @@ function renderResults(itineraries) {
       const legNum = legIdx + 1;
       const isLastLeg = legIdx === item.legs.length - 1;
       const midStops = leg.stops.slice(1, -1);
+      const legFareText = (item.transfers > 0 && leg.fare !== null)
+        ? ` · ZMW ${leg.fare}`
+        : '';
 
       // Boarding stop
       timelineHtml += `
@@ -729,7 +735,7 @@ function renderResults(itineraries) {
           </div>
           <div class="tl-content">
             <div class="tl-stop-name">${leg.board}</div>
-            <div class="tl-bus-meta">${leg.bus || 'Bus'} · ${leg.capacity || 'N/A'} seats</div>
+            <div class="tl-bus-meta">${leg.bus || 'Bus'} (${leg.capacity || 'N/A'} seats)${legFareText}</div>
           </div>
         </div>`;
 
