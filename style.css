@@ -98,7 +98,7 @@ h2 {
 .badge.dest { background: #dc2626; }
 
 .point-box input::placeholder {
-    font-size: 0.484rem;
+    font-size: 0.84rem;
     color: #6b7280;
     opacity: 1; /* prevents faded text in some browsers */
 }
