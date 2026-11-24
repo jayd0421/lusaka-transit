@@ -135,8 +135,6 @@ button:hover {
 }
 
 .route-card {
-  /* border: 1px solid #e5e7eb; */
-  color: #fff;
   background: #e6f0fd66;
   border-radius: 8px;
   padding: 10px 12px;
@@ -328,7 +326,7 @@ button:hover {
 
   /* Prevent iOS Safari auto-zoom on input focus (requires >= 16px font-size) */
   .point-box input {
-    font-size: 13px;
+    font-size: 16px;
   }
 
   .results {
@@ -441,7 +439,6 @@ button:hover {
 .swap-btn {
   position: absolute;
   right: 1%;
-  transform: translateX(-1%);
   top: 50%;
   transform: translateY(-50%);
   width: 30px;
@@ -486,7 +483,7 @@ button:hover {
   display: none;
 }
 
-/* Keep the origin input and both buttons in one row */
+/* Keep the origin input and GPS locate button in one row */
 .origin-box {
   display: flex;
   align-items: center;
@@ -498,19 +495,6 @@ button:hover {
   flex: 1;
   min-width: 0;
   width: auto;
-}
-
-/* Override the existing absolute button positioning */
-.origin-box .locate-btn,
-.origin-box .swap-btn {
-  position: static;
-  transform: none;
-  flex-shrink: 0;
-}
-
-/* Keep the swap hover effect without moving the button */
-.origin-box .swap-btn:hover {
-  transform: rotate(180deg);
 }
 
 /* Summarized Card Header & Route Pills */

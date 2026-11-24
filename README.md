@@ -2,9 +2,9 @@
 
 An interactive, client-side web map and transit route planner for Lusaka, Zambia. Built with **MapLibre GL JS**, **OpenFreeMap**, and **Turf.js**, it allows commuters and urban planners to explore informal and formal bus corridors, inspect stops, and compute direct or 1-transfer itineraries directly in the browser—with zero backend servers or API tokens required.
 
-🔗 **Live Demo:** [https://jayd0421.github.io/lusaka-transit/](link)
+🔗 **Live Demo:** [https://jayd0421.github.io/lusaka-transit/](https://jayd0421.github.io/lusaka-transit/)
 
-[![Lusaka Public Transport Route Finder Preview](assets/preview.jpeg)]([https://github.io](https://jayd0421.github.io/lusaka-transit/))
+[![Lusaka Public Transport Route Finder Preview](assets/preview.jpeg)](https://jayd0421.github.io/lusaka-transit/)
 
 ---
 
@@ -38,14 +38,22 @@ An interactive, client-side web map and transit route planner for Lusaka, Zambia
 ## Project Structure
 
 ```text
-lusaka-transit-router/
-├── index.html                   # App layout, autocomplete datalist, and UI controls
-├── style.css                    # Desktop sidebar, mobile bottom-sheet, and popup styles
-├── app.js                       # MapLibre setup, spatial indexing, routing engine, and popups
-├── README.md                    # Project documentation
+lusaka-transit/
+├── index.html                        # App layout, autocomplete datalist, and UI controls
+├── style.css                         # Desktop sidebar, mobile bottom-sheet, and popup styles
+├── app.js                            # MapLibre setup, spatial indexing, routing engine, and popups
+├── README.md                         # Project documentation
+├── assets/                           # Preview image and icons
+├── analysis/
+│   ├── animations.ipynb              # GTFS + MovingPandas + Kepler.gl trajectory animation
+│   ├── quantitative.ipynb            # r5py travel-time matrix and isochrone maps
+│   ├── map1_isochrone_polygons.png   # Filled travel-time isochrone bands
+│   └── map2_street_travel_times.png  # Street-level transit reachability map
 └── data/
-    ├── processed_trips.geojson  # Cleaned directional bus route itineraries
-    └── processed_stops.geojson  # Digitized bus stop locations
+    ├── gtfs.zip                      # Lusaka GTFS feed
+    ├── lusaka.osm.pbf                # OpenStreetMap extract for r5py routing
+    ├── processed_trips.geojson       # Cleaned directional bus route itineraries
+    └── processed_stops.geojson       # Digitized bus stop locations
 ```
 
 ---
@@ -65,6 +73,6 @@ Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ## Data Source & Credits
 
-- **Transit Dataset:** [Digital Transport for Africa — Lusaka Public Transport Data](https://gitlab.com)
+- **Transit Dataset:** [Digital Transport for Africa — Lusaka Public Transport Data](https://gitlab.com/digitaltransport/data/africa/lusaka)
 - **Basemap Data:** © [OpenStreetMap](https://openstreetmap.org) contributors, rendered via [OpenFreeMap](https://openfreemap.org)
-- **Author:** Created by [Jedidiah Chibinga](https://wixsite.com) — Earth Observation & Geospatial Data Scientist
+- **Author:** Created by [Jedidiah Chibinga](https://jedidiahchibinga.wixsite.com/jedidiah-chibinga) — Earth Observation & Geospatial Data Scientist

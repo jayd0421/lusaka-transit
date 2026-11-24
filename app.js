@@ -54,11 +54,14 @@ map.on('load', async () => {
       fetch('./data/processed_trips.geojson'),
       fetch('./data/processed_stops.geojson')
     ]);
+    if (!tripsRes.ok || !stopsRes.ok) {
+      throw new Error(`HTTP error loading GeoJSON (${tripsRes.status}, ${stopsRes.status})`);
+    }
     tripsData = await tripsRes.json();
-    stopsData = await stopsRes.json();    
-    
-    populateStopAutocomplete();
+    stopsData = await stopsRes.json();
+
     buildRouteStopIndex();
+    populateStopAutocomplete();
     initMapLayers();
     initPopups();
 
@@ -71,39 +74,94 @@ map.on('load', async () => {
   }
 });
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-// 2B. Populate autocomplete datalist with unique stop names
+// 2B. Populate autocomplete datalist, disambiguating stops with identical names >200m apart
 function populateStopAutocomplete() {
-  const uniqueNames = new Set();
+  const routesByStopGid = new Map();
+  for (const entry of routeStopIndex) {
+    const routeName = entry.trip.properties.route_long;
+    if (!routeName) continue;
+    for (const s of entry.stops) {
+      if (!routesByStopGid.has(s.gid)) {
+        routesByStopGid.set(s.gid, routeName);
+      }
+    }
+  }
+
+  const groupsByName = new Map();
   for (const stop of stopsData.features) {
     if (!stop.geometry || stop.geometry.type !== 'Point' || !stop.properties.name) continue;
     const name = stop.properties.name.trim();
     if (!name) continue;
-    if (!stopsByName.has(name.toLowerCase())) {
-      stopsByName.set(name.toLowerCase(), stop.geometry.coordinates);
-    }
-    uniqueNames.add(name);
+    const key = name.toLowerCase();
+    if (!groupsByName.has(key)) groupsByName.set(key, []);
+    groupsByName.get(key).push({
+      gid: stop.properties.gid,
+      name,
+      coord: stop.geometry.coordinates
+    });
   }
 
-  const sortedNames = Array.from(uniqueNames).sort((a, b) => a.localeCompare(b));
+  const displayLabels = [];
+  for (const stopsGroup of groupsByName.values()) {
+    // Cluster nearby stops (e.g. opposite sides of the same road) within 200m
+    const clusters = [];
+    for (const stop of stopsGroup) {
+      const pt = turf.point(stop.coord);
+      const match = clusters.find(
+        c => turf.distance(pt, turf.point(c.coord), { units: 'kilometers' }) <= 0.2
+      );
+      if (match) {
+        match.gids.push(stop.gid);
+      } else {
+        clusters.push({ name: stop.name, coord: stop.coord, gids: [stop.gid] });
+      }
+    }
+
+    if (clusters.length === 1) {
+      const c = clusters[0];
+      stopsByName.set(c.name.toLowerCase(), c.coord);
+      displayLabels.push(c.name);
+      continue;
+    }
+
+    const usedLabels = new Map();
+    for (const c of clusters) {
+      const routeHint = c.gids.map(gid => routesByStopGid.get(gid)).find(Boolean);
+      const baseLabel = routeHint ? `${c.name} (${routeHint})` : c.name;
+      const count = (usedLabels.get(baseLabel.toLowerCase()) || 0) + 1;
+      usedLabels.set(baseLabel.toLowerCase(), count);
+      const finalLabel = count === 1 ? baseLabel : `${baseLabel} #${count}`;
+      stopsByName.set(finalLabel.toLowerCase(), c.coord);
+      displayLabels.push(finalLabel);
+    }
+  }
+
+  displayLabels.sort((a, b) => a.localeCompare(b));
   const fragment = document.createDocumentFragment();
-  for (const name of sortedNames) {
+  for (const label of displayLabels) {
     const option = document.createElement('option');
-    option.value = name;
+    option.value = label;
     fragment.appendChild(option);
   }
   stopsDatalist.appendChild(fragment);
 }
 
-// 3. Precompute which stops lie within 300m of each route and their distance along the route
-// + Filter which stops physically sit on the correct side of each route
+// 3. Precompute which stops lie within 5m of each directional route centerline
 function buildRouteStopIndex() {
   const maxSnapKm = 0.005; // 5 meters max distance from the route centerline
 
   routeStopIndex = tripsData.features
     .filter(f => f.geometry && f.geometry.type === 'LineString')
     .map(trip => {
-      const totalLenKm = turf.length(trip, { units: 'kilometers' });
       const snappedStops = [];
 
       for (const stop of stopsData.features) {
@@ -112,27 +170,12 @@ function buildRouteStopIndex() {
         const snapped = turf.nearestPointOnLine(trip, stop, { units: 'kilometers' });
         if (snapped.properties.dist > maxSnapKm) continue;
 
-        // Check side of road (Zambia drives on the LEFT):
-        // Compare route travel bearing at the snapped point vs. bearing from line to stop
-        const loc = snapped.properties.location;
-        const p1 = turf.along(trip, Math.max(0, loc - 0.02), { units: 'kilometers' });
-        const p2 = turf.along(trip, Math.min(totalLenKm, loc + 0.02), { units: 'kilometers' });
-
-        const routeBearing = turf.bearing(p1, p2);
-        const stopBearing = turf.bearing(snapped, stop);
-
-        // Normalize relative angle to [-180, +180]: negative = left side, positive = right side
-        let relAngle = ((stopBearing - routeBearing + 540) % 360) - 180;
-
-        // Keep stops very close to centerline (<12m, e.g. terminals) OR on the left side of the road
-        if (snapped.properties.dist <= 0.012 || relAngle <= 15) {
-          snappedStops.push({
-            gid: stop.properties.gid,
-            name: stop.properties.name,
-            coord: stop.geometry.coordinates,
-            locationKm: loc
-          });
-        }
+        snappedStops.push({
+          gid: stop.properties.gid,
+          name: stop.properties.name,
+          coord: stop.geometry.coordinates,
+          locationKm: snapped.properties.location
+        });
       }
 
       snappedStops.sort((a, b) => a.locationKm - b.locationKm);
@@ -217,7 +260,7 @@ function initMapLayers() {
         'match',
         ['get', 'role'],
         'board', '#16a34a',    // Green for boarding stop
-        'transfer', '#575757', // Orange for transfer stop
+        'transfer', '#575757', // Dark gray for transfer stop
         'alight', '#dc2626',   // Red for alighting stop
         '#ffffff'              // White dot for intermediate stops
       ],
@@ -275,20 +318,20 @@ function initPopups() {
 
     const servingRoutes = Array.from(new Set(
       routeStopIndex
-        .filter(entry => entry.stops.some(s => s.gid === stopGid || s.name === stopName))
+        .filter(entry => entry.stops.some(s => (stopGid != null ? s.gid === stopGid : s.name === stopName)))
         .map(entry => entry.trip.properties.route_long)
         .filter(Boolean)
     )).sort();
 
     const routesHtml = servingRoutes.length
-      ? '<ul class="popup-route-list">' + servingRoutes.map(r => '<li>' + r + '</li>').join('') + '</ul>'
-      : '<div class="popup-sub">No mapped routes within 300m</div>';
+      ? '<ul class="popup-route-list">' + servingRoutes.map(r => '<li>' + escapeHtml(r) + '</li>').join('') + '</ul>'
+      : '<div class="popup-sub">No mapped routes at this stop</div>';
 
     if (activePopup) activePopup.remove();
 
     const container = document.createElement('div');
     container.innerHTML =
-      '<div class="popup-title">' + stopName + '</div>' +
+      '<div class="popup-title">' + escapeHtml(stopName) + '</div>' +
       '<div class="popup-sub"><strong>Bus routes (' + servingRoutes.length + '):</strong></div>' +
       routesHtml +
       '<div class="popup-actions">' +
@@ -315,10 +358,10 @@ function initPopups() {
     if (activePopup) activePopup.remove();
 
     const html =
-      '<div class="popup-title">' + (props.route_long || 'Bus Route') + '</div>' +
+      '<div class="popup-title">' + escapeHtml(props.route_long || 'Bus Route') + '</div>' +
       '<div class="popup-sub">' +
-        '<strong>Bus:</strong> ' + (props.vehicle_name || 'N/A') + ' (' + (props.passenger_capacity || 'N/A') + ')<br/>' +
-        '<strong>Fare:</strong> ZMW ' + (props.fare || 'N/A') + '<br/>' +
+        '<strong>Bus:</strong> ' + escapeHtml(props.vehicle_name || 'N/A') + ' (' + escapeHtml(props.passenger_capacity || 'N/A') + ')<br/>' +
+        '<strong>Fare:</strong> ZMW ' + escapeHtml(props.fare ?? 'N/A') + '<br/>' +
         '<strong>Length:</strong> ' + (props.len_km ? Number(props.len_km).toFixed(1) + ' km' : 'N/A') +
       '</div>';
 
@@ -580,86 +623,97 @@ function findRoutes(orig, dest) {
       for (const a of alightOptions) {
         if (b.entry.trip.properties.gid === a.entry.trip.properties.gid) continue;
 
-        // Find shared or nearby (<200m) transfer stop
+        // Find the best shared or nearby (<200m) transfer stop pair
+        let bestXfer = null;
         for (const s1 of b.entry.stops) {
           if (s1.locationKm <= b.stop.locationKm) continue;
           for (const s2 of a.entry.stops) {
             if (s2.locationKm >= a.stop.locationKm) continue;
             const xferWalk = turf.distance(turf.point(s1.coord), turf.point(s2.coord), { units: 'kilometers' });
-            if (xferWalk <= 0.20) {
-              const seg1 = turf.lineSliceAlong(b.entry.trip, b.stop.locationKm, s1.locationKm, { units: 'kilometers' });
-              seg1.properties = { leg: 1 };
-              const seg2 = turf.lineSliceAlong(a.entry.trip, s2.locationKm, a.stop.locationKm, { units: 'kilometers' });
-              seg2.properties = { leg: 2 };
+            if (xferWalk > 0.20) continue;
 
-              const stops1Range = b.entry.stops.filter(
-                s => s.locationKm >= b.stop.locationKm && s.locationKm <= s1.locationKm
-              );
-              const stops2Range = a.entry.stops.filter(
-                s => s.locationKm >= s2.locationKm && s.locationKm <= a.stop.locationKm
-              );
-              const stops1 = stops1Range.map(s => s.name);
-              const stops2 = stops2Range.map(s => s.name);
-
-              const stopFeatures = [
-                ...stops1Range.map((s, idx) => ({
-                  type: 'Feature',
-                  geometry: { type: 'Point', coordinates: s.coord },
-                  properties: {
-                    name: s.name,
-                    role: idx === 0 ? 'board' : (idx === stops1Range.length - 1 ? 'transfer' : 'intermediate')
-                  }
-                })),
-                ...stops2Range.map((s, idx) => ({
-                  type: 'Feature',
-                  geometry: { type: 'Point', coordinates: s.coord },
-                  properties: {
-                    name: s.name,
-                    role: idx === 0 ? 'transfer' : (idx === stops2Range.length - 1 ? 'alight' : 'intermediate')
-                  }
-                }))
-              ];
-
-
-              const walkFeatures = [];
-              if (b.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([orig, b.stop.coord]));
-              if (xferWalk > 0.01) walkFeatures.push(turf.lineString([s1.coord, s2.coord]));
-              if (a.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([a.stop.coord, dest]));
-
-              itineraries.push({
-                transfers: 1,
-                walkKm: b.stop.walkKm + a.stop.walkKm + xferWalk,
-                boardWalkKm: b.stop.walkKm,
-                xferWalkKm: xferWalk,
-                alightWalkKm: a.stop.walkKm,
-                fare: (b.entry.trip.properties.fare || 0) + (a.entry.trip.properties.fare || 0),
-                legs: [
-                  {
-                    route: b.entry.trip.properties.route_long,
-                    bus: b.entry.trip.properties.vehicle_name,
-                    capacity: b.entry.trip.properties.passenger_capacity,
-                    fare: b.entry.trip.properties.fare ?? null,
-                    board: b.stop.name,
-                    alight: s1.name,
-                    stops: stops1
-                  },
-                  {
-                    route: a.entry.trip.properties.route_long,
-                    bus: a.entry.trip.properties.vehicle_name,
-                    capacity: a.entry.trip.properties.passenger_capacity,
-                    fare: a.entry.trip.properties.fare ?? null,
-                    board: s2.name,
-                    alight: a.stop.name,
-                    stops: stops2
-                  }
-                ],
-                features: [seg1, seg2],
-                walkFeatures: walkFeatures,
-                stopFeatures: stopFeatures
-              });
-              break;
+            const rideKm = (s1.locationKm - b.stop.locationKm) + (a.stop.locationKm - s2.locationKm);
+            if (
+              !bestXfer ||
+              xferWalk < bestXfer.xferWalk - 1e-6 ||
+              (Math.abs(xferWalk - bestXfer.xferWalk) <= 1e-6 && rideKm < bestXfer.rideKm)
+            ) {
+              bestXfer = { s1, s2, xferWalk, rideKm };
             }
           }
+        }
+
+        if (bestXfer) {
+          const { s1, s2, xferWalk } = bestXfer;
+          const seg1 = turf.lineSliceAlong(b.entry.trip, b.stop.locationKm, s1.locationKm, { units: 'kilometers' });
+          seg1.properties = { leg: 1 };
+          const seg2 = turf.lineSliceAlong(a.entry.trip, s2.locationKm, a.stop.locationKm, { units: 'kilometers' });
+          seg2.properties = { leg: 2 };
+
+          const stops1Range = b.entry.stops.filter(
+            s => s.locationKm >= b.stop.locationKm && s.locationKm <= s1.locationKm
+          );
+          const stops2Range = a.entry.stops.filter(
+            s => s.locationKm >= s2.locationKm && s.locationKm <= a.stop.locationKm
+          );
+          const stops1 = stops1Range.map(s => s.name);
+          const stops2 = stops2Range.map(s => s.name);
+
+          const stopFeatures = [
+            ...stops1Range.map((s, idx) => ({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: s.coord },
+              properties: {
+                name: s.name,
+                role: idx === 0 ? 'board' : (idx === stops1Range.length - 1 ? 'transfer' : 'intermediate')
+              }
+            })),
+            ...stops2Range.map((s, idx) => ({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: s.coord },
+              properties: {
+                name: s.name,
+                role: idx === 0 ? 'transfer' : (idx === stops2Range.length - 1 ? 'alight' : 'intermediate')
+              }
+            }))
+          ];
+
+          const walkFeatures = [];
+          if (b.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([orig, b.stop.coord]));
+          if (xferWalk > 0.01) walkFeatures.push(turf.lineString([s1.coord, s2.coord]));
+          if (a.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([a.stop.coord, dest]));
+
+          itineraries.push({
+            transfers: 1,
+            walkKm: b.stop.walkKm + a.stop.walkKm + xferWalk,
+            boardWalkKm: b.stop.walkKm,
+            xferWalkKm: xferWalk,
+            alightWalkKm: a.stop.walkKm,
+            fare: (b.entry.trip.properties.fare || 0) + (a.entry.trip.properties.fare || 0),
+            legs: [
+              {
+                route: b.entry.trip.properties.route_long,
+                bus: b.entry.trip.properties.vehicle_name,
+                capacity: b.entry.trip.properties.passenger_capacity,
+                fare: b.entry.trip.properties.fare ?? null,
+                board: b.stop.name,
+                alight: s1.name,
+                stops: stops1
+              },
+              {
+                route: a.entry.trip.properties.route_long,
+                bus: a.entry.trip.properties.vehicle_name,
+                capacity: a.entry.trip.properties.passenger_capacity,
+                fare: a.entry.trip.properties.fare ?? null,
+                board: s2.name,
+                alight: a.stop.name,
+                stops: stops2
+              }
+            ],
+            features: [seg1, seg2],
+            walkFeatures: walkFeatures,
+            stopFeatures: stopFeatures
+          });
         }
       }
     }
@@ -700,12 +754,12 @@ function renderResults(itineraries) {
 
     // 2. Summary Route Pills (Blue for Leg 1, Orange for Leg 2)
     const routePillsHtml = item.legs.map((leg, i) =>
-      `<span class="route-pill leg-${i + 1}"><i class="fa-solid fa-bus"></i> ${leg.route}</span>`
+      `<span class="route-pill leg-${i + 1}"><i class="fa-solid fa-bus"></i> ${escapeHtml(leg.route)}</span>`
     ).join('<span class="pill-arrow">→</span>');
 
     // 3. Summary Footer: Origin/Destination stops + Details toggle button
-    const firstBoard = item.legs[0].board;
-    const lastAlight = item.legs[item.legs.length - 1].alight;
+    const firstBoard = escapeHtml(item.legs[0].board);
+    const lastAlight = escapeHtml(item.legs[item.legs.length - 1].alight);
 
     // 4. Expanded Vertical Timeline HTML
     let timelineHtml = '<div class="trip-timeline">';
@@ -723,7 +777,7 @@ function renderResults(itineraries) {
       const isLastLeg = legIdx === item.legs.length - 1;
       const midStops = leg.stops.slice(1, -1);
       const legFareText = (item.transfers > 0 && leg.fare !== null)
-        ? ` · ZMW ${leg.fare}`
+        ? ` · ZMW ${escapeHtml(leg.fare)}`
         : '';
 
       // Boarding stop
@@ -734,8 +788,8 @@ function renderResults(itineraries) {
             <span class="tl-line line-leg-${legNum}"></span>
           </div>
           <div class="tl-content">
-            <div class="tl-stop-name">${leg.board}</div>
-            <div class="tl-bus-meta">${leg.bus || 'Bus'} (${leg.capacity || 'N/A'} seats)${legFareText}</div>
+            <div class="tl-stop-name">${escapeHtml(leg.board)}</div>
+            <div class="tl-bus-meta">${escapeHtml(leg.bus || 'Bus')} (${escapeHtml(leg.capacity || 'N/A')} seats)${legFareText}</div>
           </div>
         </div>`;
 
@@ -747,7 +801,7 @@ function renderResults(itineraries) {
               <span class="tl-dot dot-mid"></span>
               <span class="tl-line line-leg-${legNum}"></span>
             </div>
-            <div class="tl-content tl-mid-name">${stopName}</div>
+            <div class="tl-content tl-mid-name">${escapeHtml(stopName)}</div>
           </div>`;
       });
 
@@ -759,7 +813,7 @@ function renderResults(itineraries) {
             ${(!isLastLeg || item.alightWalkKm > 0.01) ? '<span class="tl-line line-walk"></span>' : ''}
           </div>
           <div class="tl-content">
-            <div class="tl-stop-name">${leg.alight}</div>
+            <div class="tl-stop-name">${escapeHtml(leg.alight)}</div>
           </div>
         </div>`;
 
@@ -789,7 +843,7 @@ function renderResults(itineraries) {
     card.innerHTML = `
       <div class="card-summary-top">
         <span class="trip-type-badge ${badgeClass}">${badgeText}</span>
-        <span class="trip-metrics"><strong>ZMW ${item.fare}</strong> · Walk ~${Math.round(item.walkKm * 1000)}m</span>
+        <span class="trip-metrics"><strong>ZMW ${escapeHtml(item.fare)}</strong> · Walk ~${Math.round(item.walkKm * 1000)}m</span>
       </div>
       <div class="card-route-pills">${routePillsHtml}</div>
       <div class="card-summary-footer">
