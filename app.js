@@ -47,7 +47,7 @@ toggleSidebarBtn.addEventListener('click', () => {
 });
 
 
-// 2. Load local GeoJSON files once map loads
+// 2A. Load local GeoJSON files once map loads
 map.on('load', async () => {
   try {
     const [tripsRes, stopsRes] = await Promise.all([
@@ -551,9 +551,11 @@ function findRoutes(orig, dest) {
         if (b.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([orig, b.stop.coord]));
         if (a.stop.walkKm > 0.01) walkFeatures.push(turf.lineString([a.stop.coord, dest]));
 
-        itineraries.push({
-          transfers: 0,
+        itineraries.push({transfers: 0,
           walkKm: b.stop.walkKm + a.stop.walkKm,
+          boardWalkKm: b.stop.walkKm,
+          xferWalkKm: 0,
+          alightWalkKm: a.stop.walkKm,
           fare: b.entry.trip.properties.fare || 0,
           legs: [{
             route: b.entry.trip.properties.route_long,
@@ -626,6 +628,9 @@ function findRoutes(orig, dest) {
               itineraries.push({
                 transfers: 1,
                 walkKm: b.stop.walkKm + a.stop.walkKm + xferWalk,
+                boardWalkKm: b.stop.walkKm,
+                xferWalkKm: xferWalk,
+                alightWalkKm: a.stop.walkKm,
                 fare: (b.entry.trip.properties.fare || 0) + (a.entry.trip.properties.fare || 0),
                 legs: [
                   {
@@ -670,7 +675,7 @@ function findRoutes(orig, dest) {
   renderResults(unique);
 }
 
-// 7. Display route cards in sidebar & highlight selected journey on map
+// 7. Display summarized route cards with expandable stop timeline
 function renderResults(itineraries) {
   sidebarEl.classList.remove('collapsed');
   resultsEl.innerHTML = '';
@@ -686,26 +691,130 @@ function renderResults(itineraries) {
     const card = document.createElement('div');
     card.className = 'route-card' + (idx === 0 ? ' active' : '');
 
-    const title = item.transfers === 0
-      ? 'Direct: ' + item.legs[0].route
-      : 'Transfer: ' + item.legs[0].route + ' → ' + item.legs[1].route;
+    // 1. Summary Top Row: Transfer pill + Fare & Walk
+    const badgeClass = item.transfers === 0 ? 'direct' : 'transfer';
+    const badgeText = item.transfers === 0 ? 'Direct' : '1 Transfer';
 
-    const legsHtml = item.legs.map((leg, i) =>
-      '<div style="margin-top:4px;">' +
-        '<strong>Trip ' + (i + 1) + ':</strong> ' + leg.route + '<br/>' +
-        'Bus: ' + (leg.bus || 'Bus') + ' (' + (leg.capacity || 'N/A') + ')<br/>' +
-        'Board: <em>' + leg.board + '</em> → Dropoff: <em>' + leg.alight + '</em>' +
-        '<div class="stops-list">Stops (' + leg.stops.length + '): ' + leg.stops.join(' → ') + '</div>' +
-      '</div>'
-    ).join('');
+    // 2. Summary Route Pills (Blue for Leg 1, Orange for Leg 2)
+    const routePillsHtml = item.legs.map((leg, i) =>
+      `<span class="route-pill leg-${i + 1}"><i class="fa-solid fa-bus"></i> ${leg.route}</span>`
+    ).join('<span class="pill-arrow">→</span>');
 
-    card.innerHTML =
-      '<div class="route-title">' + title + '</div>' +
-      '<div class="route-meta">' +
-        'Total Fare: <strong>ZMW ' + item.fare + '</strong> · Walk: ~' + Math.round(item.walkKm * 1000) + 'm' +
-        legsHtml +
-      '</div>';
+    // 3. Summary Footer: Origin/Destination stops + Details toggle button
+    const firstBoard = item.legs[0].board;
+    const lastAlight = item.legs[item.legs.length - 1].alight;
 
+    // 4. Expanded Vertical Timeline HTML
+    let timelineHtml = '<div class="trip-timeline">';
+
+    if (item.boardWalkKm > 0.01) {
+      timelineHtml += `
+        <div class="tl-step walk">
+          <div class="tl-marker"><span class="tl-dot dot-walk"></span><span class="tl-line line-walk"></span></div>
+          <div class="tl-content tl-muted">Walk ~${Math.round(item.boardWalkKm * 1000)}m to <strong>${firstBoard}</strong></div>
+        </div>`;
+    }
+
+    item.legs.forEach((leg, legIdx) => {
+      const legNum = legIdx + 1;
+      const isLastLeg = legIdx === item.legs.length - 1;
+      const midStops = leg.stops.slice(1, -1);
+
+      // Boarding stop
+      timelineHtml += `
+        <div class="tl-step">
+          <div class="tl-marker">
+            <span class="tl-dot ${legIdx === 0 ? 'dot-board' : 'dot-transfer'}"></span>
+            <span class="tl-line line-leg-${legNum}"></span>
+          </div>
+          <div class="tl-content">
+            <div class="tl-stop-name">${leg.board}</div>
+            <div class="tl-bus-meta">${leg.bus || 'Bus'} · ${leg.capacity || 'N/A'} seats</div>
+          </div>
+        </div>`;
+
+      // Intermediate stops
+      midStops.forEach(stopName => {
+        timelineHtml += `
+          <div class="tl-step tl-mid">
+            <div class="tl-marker">
+              <span class="tl-dot dot-mid"></span>
+              <span class="tl-line line-leg-${legNum}"></span>
+            </div>
+            <div class="tl-content tl-mid-name">${stopName}</div>
+          </div>`;
+      });
+
+      // Alighting stop (either transfer point or final dropoff)
+      timelineHtml += `
+        <div class="tl-step">
+          <div class="tl-marker">
+            <span class="tl-dot ${isLastLeg ? 'dot-alight' : 'dot-transfer'}"></span>
+            ${(!isLastLeg || item.alightWalkKm > 0.01) ? '<span class="tl-line line-walk"></span>' : ''}
+          </div>
+          <div class="tl-content">
+            <div class="tl-stop-name">${leg.alight}</div>
+          </div>
+        </div>`;
+
+      // Transfer walk connector between Leg 1 and Leg 2
+      if (!isLastLeg) {
+        const xferText = item.xferWalkKm > 0.01
+          ? `Transfer walk ~${Math.round(item.xferWalkKm * 1000)}m`
+          : 'Transfer at same stop';
+        timelineHtml += `
+          <div class="tl-step walk">
+            <div class="tl-marker"><span class="tl-line line-walk"></span></div>
+            <div class="tl-content tl-muted">${xferText}</div>
+          </div>`;
+      }
+    });
+
+    if (item.alightWalkKm > 0.01) {
+      timelineHtml += `
+        <div class="tl-step walk">
+          <div class="tl-marker"><span class="tl-dot dot-walk"></span></div>
+          <div class="tl-content tl-muted">Walk ~${Math.round(item.alightWalkKm * 1000)}m to Destination</div>
+        </div>`;
+    }
+
+    timelineHtml += '</div>';
+
+    card.innerHTML = `
+      <div class="card-summary-top">
+        <span class="trip-type-badge ${badgeClass}">${badgeText}</span>
+        <span class="trip-metrics"><strong>ZMW ${item.fare}</strong> · Walk ~${Math.round(item.walkKm * 1000)}m</span>
+      </div>
+      <div class="card-route-pills">${routePillsHtml}</div>
+      <div class="card-summary-footer">
+        <span class="card-endpoints" title="${firstBoard} → ${lastAlight}">
+          <strong>${firstBoard}</strong> → <strong>${lastAlight}</strong>
+        </span>
+        <button type="button" class="details-toggle-btn" aria-expanded="false">
+          Details <i class="fa-solid fa-chevron-down"></i>
+        </button>
+      </div>
+      ${timelineHtml}
+    `;
+
+    // Toggle details drawer without re-zooming map
+    const detailsBtn = card.querySelector('.details-toggle-btn');
+    detailsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isExpanded = card.classList.toggle('expanded');
+      detailsBtn.setAttribute('aria-expanded', isExpanded);
+      detailsBtn.innerHTML = isExpanded
+        ? 'Hide <i class="fa-solid fa-chevron-up"></i>'
+        : 'Details <i class="fa-solid fa-chevron-down"></i>';
+
+      if (!card.classList.contains('active')) {
+        document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        highlightItinerary(item);
+      }
+    });
+
+    // Click card body to highlight route on map
     card.addEventListener('click', () => {
       document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
       card.classList.add('active');
