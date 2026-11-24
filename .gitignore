@@ -1,0 +1,8 @@
+data/gdf_points.json
+data/zambia-latest.osm.pbf
+
+analysis/current_network_movements.html
+
+r5py-env/
+
+.DS_Store
