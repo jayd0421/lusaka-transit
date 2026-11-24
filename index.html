@@ -35,24 +35,25 @@
     <p class="subtitle">Type a stop name or click the map to set <strong>Origin</strong> and <strong>Destination</strong>.</p>
 
     <div class="controls">
-        <div class="point-box">
-          <span class="badge origin">A</span>
-          <input id="origin-input" type="text" list="stops-datalist" placeholder="Type stop or click map for Origin" autocomplete="off" />
-          <button id="locate-btn" class="locate-btn" type="button" title="Use my current GPS location" aria-label="Use my current GPS location"><i class="fa-solid fa-location-crosshairs"></i></button>
-        </div>
-        <div class="point-box">
-          <span class="badge dest">B</span>
-          <input id="dest-input" type="text" list="stops-datalist" placeholder="Type stop or click map for Destination" autocomplete="off" />
-        </div>
+          <div class="inputs-wrapper">
+            <div class="point-box origin-box">
+              <span class="badge origin">A</span>
+              <input id="origin-input" type="text" list="stops-datalist" placeholder="Type stop or click map for Origin" autocomplete="off" />
+              <button id="locate-btn" class="locate-btn" type="button" title="Use my current GPS location" aria-label="Use my current GPS location"><i class="fa-solid fa-location-crosshairs"></i></button>
+            </div>
+            <div class="point-box">
+              <span class="badge dest">B</span>
+              <input id="dest-input" type="text" list="stops-datalist" placeholder="Type stop or click map for Destination" autocomplete="off" />
+            </div>
 
-        <button id="swap-btn" class="swap-btn" type="button" title="Swap Origin and Destination" aria-label="Swap Origin and Destination">⇅</button>
+            <button id="swap-btn" class="swap-btn" type="button" title="Swap Origin and Destination" aria-label="Swap Origin and Destination">⇅</button>
+          </div>
 
-      <datalist id="stops-datalist"></datalist>
-      <button id="reset-btn" type="button">Reset Points</button>
+          <datalist id="stops-datalist"></datalist>
+          <button id="reset-btn" type="button">Reset Points</button>
 
-
-      <div id="status" class="status">Loading routes & stops...</div>
-      <div id="results" class="results"></div>
+          <div id="status" class="status">Loading routes & stops...</div>
+          <div id="results" class="results"></div>
 
       <!-- <footer class="sidebar-footer">
         <div>Data: <a href="https://gitlab.com/digitaltransport/data/africa/lusaka" target="_blank" rel="noopener noreferrer">Digital Transport for Africa (Lusaka)</a></div>
