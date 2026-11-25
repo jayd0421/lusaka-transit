@@ -29,6 +29,7 @@ let stopsByName = new Map(); // Lookup map for stop autocomplete
 let originCoord = null;
 let destCoord = null;
 let activePopup = null;
+let hoverPopup = null;
 let handledLayerClick = false;
 let originMarker = null;
 let destMarker = null;
@@ -195,6 +196,10 @@ function initMapLayers() {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] }
   });
+  map.addSource('inspected-route', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }
+  });
   map.addSource('selected-stops', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] }
@@ -210,6 +215,19 @@ function initMapLayers() {
       'line-color': '#94a3b8',
       'line-width': 3,
       'line-opacity': 0.8
+    }
+  });
+
+  // Highlighted full route inspected via map click
+  map.addLayer({
+    id: 'inspected-route-layer',
+    type: 'line',
+    source: 'inspected-route',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': '#7c3aed',
+      'line-width': 5.5,
+      'line-opacity': 0.9
     }
   });
 
@@ -297,20 +315,91 @@ function initMapLayers() {
 
 }
 
-// 4B. Interactive Popups when clicking Bus Stops or Routes
+function clearInspectedRoute() {
+  const inspectedSrc = map.getSource('inspected-route');
+  if (inspectedSrc) inspectedSrc.setData({ type: 'FeatureCollection', features: [] });
+}
+
+function highlightInspectedTrip(trip) {
+  if (!trip) return;
+  const inspectedSrc = map.getSource('inspected-route');
+  if (inspectedSrc) {
+    inspectedSrc.setData({ type: 'FeatureCollection', features: [trip] });
+  }
+  const bbox = turf.bbox(trip);
+  const isMobile = window.innerWidth <= 768;
+  const isCollapsed = sidebarEl.classList.contains('collapsed');
+  const padding = isMobile
+    ? { top: 40, right: 40, bottom: isCollapsed ? 80 : Math.round(window.innerHeight * 0.54), left: 40 }
+    : { top: 60, right: 60, bottom: 60, left: 400 };
+  map.fitBounds(bbox, { padding: padding, maxZoom: 14 });
+}
+
+// 4B. Interactive Hover Tooltips & Click Popups for Bus Stops and Routes
 function initPopups() {
-  ['all-stops-layer', 'all-trips-layer', 'selected-route-layer'].forEach(layerId => {
-    map.on('mouseenter', layerId, () => {
+  const tripsByGid = new Map();
+  for (const trip of tripsData.features) {
+    if (trip.properties && trip.properties.gid != null) {
+      tripsByGid.set(String(trip.properties.gid), trip);
+    }
+  }
+
+  hoverPopup = new maplibregl.Popup({
+    closeButton: false,
+    closeOnClick: false,
+    offset: 10,
+    className: 'hover-tooltip',
+    maxWidth: '280px'
+  });
+
+  map.on('mousemove', (e) => {
+    const stopBox = [[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]];
+    const stopHits = map.queryRenderedFeatures(stopBox, { layers: ['all-stops-layer'] });
+
+    if (stopHits.length) {
       map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', layerId, () => {
-      map.getCanvas().style.cursor = '';
-    });
+      const stop = stopHits[0];
+      const coords = stop.geometry.coordinates.slice();
+      const stopName = stop.properties.name || 'Unnamed Bus Stop';
+      hoverPopup
+        .setLngLat(coords)
+        .setHTML('<div class="hover-tooltip-title">' + escapeHtml(stopName) + '</div>')
+        .addTo(map);
+      return;
+    }
+
+    const routeBox = [[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]];
+    const routeHits = map.queryRenderedFeatures(routeBox, { layers: ['all-trips-layer'] });
+
+    if (routeHits.length) {
+      map.getCanvas().style.cursor = 'pointer';
+      const uniqueNames = Array.from(new Set(
+        routeHits.map(f => f.properties && f.properties.route_long).filter(Boolean)
+      ));
+      const html = uniqueNames.length <= 1
+        ? '<div class="hover-tooltip-title">' + escapeHtml(uniqueNames[0] || 'Bus Route') + '</div>'
+        : '<div class="hover-tooltip-title">Routes (' + uniqueNames.length + ')</div>' +
+          '<ul class="hover-tooltip-list">' +
+            uniqueNames.map(name => '<li>' + escapeHtml(name) + '</li>').join('') +
+          '</ul>';
+      hoverPopup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+      return;
+    }
+
+    map.getCanvas().style.cursor = '';
+    hoverPopup.remove();
+  });
+
+  map.getCanvas().addEventListener('mouseleave', () => {
+    map.getCanvas().style.cursor = '';
+    if (hoverPopup) hoverPopup.remove();
   });
 
   // 1. Click on a Bus Stop -> Show name, serving routes, and "Go here" button
   map.on('click', 'all-stops-layer', (e) => {
     handledLayerClick = true;
+    if (hoverPopup) hoverPopup.remove();
+
     const feature = e.features[0];
     const coords = feature.geometry.coordinates.slice();
     const stopGid = feature.properties.gid;
@@ -349,25 +438,91 @@ function initPopups() {
       .addTo(map);
   });
 
-  // 2. Click on a Bus Route Line -> Show route name, bus type, fare, and length
+  // 2. Click on a Bus Route Line -> Highlight full route (with picker if multiple overlap)
   map.on('click', 'all-trips-layer', (e) => {
     if (handledLayerClick) return;
     handledLayerClick = true;
+    if (hoverPopup) hoverPopup.remove();
 
-    const props = e.features[0].properties;
+    const clickBox = [[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]];
+    const hitFeatures = map.queryRenderedFeatures(clickBox, { layers: ['all-trips-layer'] });
+    const seenGids = new Set();
+    const matchedTrips = [];
+    for (const f of hitFeatures) {
+      const gid = f.properties && f.properties.gid != null ? String(f.properties.gid) : null;
+      if (!gid || seenGids.has(gid)) continue;
+      seenGids.add(gid);
+      const fullTrip = tripsByGid.get(gid);
+      if (fullTrip) matchedTrips.push(fullTrip);
+    }
+
+    if (!matchedTrips.length) return;
     if (activePopup) activePopup.remove();
 
-    const html =
-      '<div class="popup-title">' + escapeHtml(props.route_long || 'Bus Route') + '</div>' +
-      '<div class="popup-sub">' +
-        '<strong>Bus:</strong> ' + escapeHtml(props.vehicle_name || 'N/A') + ' (' + escapeHtml(props.passenger_capacity || 'N/A') + ')<br/>' +
-        '<strong>Fare:</strong> ZMW ' + escapeHtml(props.fare ?? 'N/A') + '<br/>' +
-        '<strong>Length:</strong> ' + (props.len_km ? Number(props.len_km).toFixed(1) + ' km' : 'N/A') +
-      '</div>';
+    if (matchedTrips.length === 1) {
+      const trip = matchedTrips[0];
+      const props = trip.properties;
+      highlightInspectedTrip(trip);
 
-    activePopup = new maplibregl.Popup({ offset: 8 })
+      const dirText = (props.origin && props.destination)
+        ? '<strong>Direction:</strong> ' + escapeHtml(props.origin) + ' &rarr; ' + escapeHtml(props.destination) + '<br/>'
+        : '';
+
+      const html =
+        '<div class="popup-title">' + escapeHtml(props.route_long || 'Bus Route') + '</div>' +
+        '<div class="popup-sub">' +
+          dirText +
+          '<strong>Bus:</strong> ' + escapeHtml(props.vehicle_name || 'N/A') + '<br/>' +
+          '<strong>Fare:</strong> K ' + escapeHtml(props.fare ?? 'N/A') + '<br/>' +
+          '<strong>Length:</strong> ' + (props.len_km ? Number(props.len_km).toFixed(1) + ' km' : 'N/A') +
+        '</div>';
+
+      activePopup = new maplibregl.Popup({ offset: 8 })
+        .setLngLat(e.lngLat)
+        .setHTML(html)
+        .addTo(map);
+      return;
+    }
+
+    // Multiple overlapping routes: open route picker popup and highlight selection
+    highlightInspectedTrip(matchedTrips[0]);
+
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<div class="popup-title">Overlapping Routes (' + matchedTrips.length + ')</div>' +
+      '<div class="popup-sub">Click a route to highlight it:</div>' +
+      '<div class="popup-route-picker"></div>';
+
+    const pickerEl = container.querySelector('.popup-route-picker');
+    matchedTrips.forEach((trip, idx) => {
+      const props = trip.properties;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'popup-picker-item' + (idx === 0 ? ' active' : '');
+      const dirLabel = (props.origin && props.destination)
+        ? escapeHtml(props.origin) + ' &rarr; ' + escapeHtml(props.destination)
+        : '';
+      const lenText = props.len_km ? Number(props.len_km).toFixed(1) + ' km' : 'N/A';
+
+      btn.innerHTML =
+        '<div class="picker-route-name">' + escapeHtml(props.route_long || 'Bus Route') + '</div>' +
+        (dirLabel ? '<div class="picker-route-dir">' + dirLabel + '</div>' : '') +
+        '<div class="picker-route-meta">' +
+          escapeHtml(props.vehicle_name || 'N/A') + ' &middot; K ' + escapeHtml(props.fare ?? 'N/A') + ' &middot; ' + lenText +
+        '</div>';
+
+      btn.addEventListener('click', () => {
+        pickerEl.querySelectorAll('.popup-picker-item').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+        highlightInspectedTrip(trip);
+      });
+
+      pickerEl.appendChild(btn);
+    });
+
+    activePopup = new maplibregl.Popup({ offset: 8, maxWidth: '300px' })
       .setLngLat(e.lngLat)
-      .setHTML(html)
+      .setDOMContent(container)
       .addTo(map);
   });
 }
@@ -426,6 +581,7 @@ map.on('click', (e) => {
     handledLayerClick = false;
     return;
   }
+  clearInspectedRoute();
   if (!routeStopIndex.length) return;
   const lngLat = [e.lngLat.lng, e.lngLat.lat];
 
@@ -537,6 +693,7 @@ function clearHighlightedRoute() {
   if (routeSrc) routeSrc.setData({ type: 'FeatureCollection', features: [] });
   if (walkSrc) walkSrc.setData({ type: 'FeatureCollection', features: [] });
   if (stopsSrc) stopsSrc.setData({ type: 'FeatureCollection', features: [] });
+  clearInspectedRoute();
 }
 
 // 6. Find Direct (0-transfer) and 1-Transfer bus itineraries
@@ -603,7 +760,6 @@ function findRoutes(orig, dest) {
           legs: [{
             route: b.entry.trip.properties.route_long,
             bus: b.entry.trip.properties.vehicle_name,
-            capacity: b.entry.trip.properties.passenger_capacity,
             fare: b.entry.trip.properties.fare ?? null,
             board: b.stop.name,
             alight: a.stop.name,
@@ -694,7 +850,6 @@ function findRoutes(orig, dest) {
               {
                 route: b.entry.trip.properties.route_long,
                 bus: b.entry.trip.properties.vehicle_name,
-                capacity: b.entry.trip.properties.passenger_capacity,
                 fare: b.entry.trip.properties.fare ?? null,
                 board: b.stop.name,
                 alight: s1.name,
@@ -703,7 +858,6 @@ function findRoutes(orig, dest) {
               {
                 route: a.entry.trip.properties.route_long,
                 bus: a.entry.trip.properties.vehicle_name,
-                capacity: a.entry.trip.properties.passenger_capacity,
                 fare: a.entry.trip.properties.fare ?? null,
                 board: s2.name,
                 alight: a.stop.name,
@@ -776,8 +930,8 @@ function renderResults(itineraries) {
       const legNum = legIdx + 1;
       const isLastLeg = legIdx === item.legs.length - 1;
       const midStops = leg.stops.slice(1, -1);
-      const legFareText = (item.transfers > 0 && leg.fare !== null)
-        ? ` · ZMW ${escapeHtml(leg.fare)}`
+      const legFareBadge = (item.transfers > 0 && leg.fare !== null)
+        ? `<span class="tl-fare-meta">K ${escapeHtml(leg.fare)}</span>`
         : '';
 
       // Boarding stop
@@ -789,7 +943,10 @@ function renderResults(itineraries) {
           </div>
           <div class="tl-content">
             <div class="tl-stop-name">${escapeHtml(leg.board)}</div>
-            <div class="tl-bus-meta">${escapeHtml(leg.bus || 'Bus')} (${escapeHtml(leg.capacity || 'N/A')} seats)${legFareText}</div>
+            <div class="tl-meta-row">
+              <span class="tl-bus-meta">${escapeHtml(leg.bus || 'Bus')}</span>
+              ${legFareBadge}
+            </div>
           </div>
         </div>`;
 
@@ -843,7 +1000,7 @@ function renderResults(itineraries) {
     card.innerHTML = `
       <div class="card-summary-top">
         <span class="trip-type-badge ${badgeClass}">${badgeText}</span>
-        <span class="trip-metrics"><strong>ZMW ${escapeHtml(item.fare)}</strong> · Walk ~${Math.round(item.walkKm * 1000)}m</span>
+        <span class="trip-metrics"><strong>K ${escapeHtml(item.fare)}</strong> · Walk ~${Math.round(item.walkKm * 1000)}m</span>
       </div>
       <div class="card-route-pills">${routePillsHtml}</div>
       <div class="card-summary-footer">
@@ -887,6 +1044,7 @@ function renderResults(itineraries) {
 }
 
 function highlightItinerary(item) {
+  clearInspectedRoute();
   const routeFc = { type: 'FeatureCollection', features: item.features };
   const walkFc = { type: 'FeatureCollection', features: item.walkFeatures || [] };
   const stopsFc = { type: 'FeatureCollection', features: item.stopFeatures || [] };

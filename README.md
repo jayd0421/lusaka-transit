@@ -19,8 +19,8 @@ An interactive, client-side web map and transit route planner for Lusaka, Zambia
 
   - One-click **Swap (`⇅`)** button to reverse origin and destination for return trips.
 - **Interactive Map Inspection:**
-  - Click any bus stop to view all routes serving that stop and set it as your destination with a **"Go here"** button.
-  - Click any route line to inspect vehicle type (e.g., Minibus, Rosa-Coaster), passenger capacity, fare (ZMW), and route length.
+  - Hover over any bus stop to preview its name, or click it to view all routes serving that stop and set it as your destination with a **"Go here"** button.
+  - Hover over any route line to see all route names along that corridor, or click it to highlight the full directional route (with a picker when multiple routes overlap) and inspect vehicle type, fare (ZMW), and route length.
   - Displays dashed walking connectors (`Origin → Boarding Stop`, `Transfer Walk`, and `Alighting Stop → Destination`) alongside color-coded boarding, transfer, and alighting stop markers.
 - **Responsive Mobile Layout:** Automatically adapts into a collapsible bottom sheet on mobile screens.
 
