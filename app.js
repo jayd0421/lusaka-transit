@@ -1,25 +1,15 @@
-// 1. Initialize MapLibre with free OpenFreeMap vector tiles (no API token required)
-const map = new maplibregl.Map({
-  container: 'map',
-  style: 'https://tiles.openfreemap.org/styles/liberty',
-  center: [28.31, -15.42], // Lusaka: [longitude, latitude]
-  zoom: 12,
-  attributionControl: false
+const loaderOverlay = document.getElementById('loader-overlay');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const originInput = document.getElementById('origin-input');
+const destInput = document.getElementById('dest-input');
+const stopsDatalist = document.getElementById('stops-datalist');
+const sidebarEl = document.getElementById('sidebar');
+const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
+
+toggleSidebarBtn.addEventListener('click', () => {
+  sidebarEl.classList.toggle('collapsed');
 });
-
-map.addControl(
-  new maplibregl.AttributionControl({
-    compact: false,
-    customAttribution: [
-      'Data: <a href="https://gitlab.com/digitaltransport/data/africa/lusaka" target="_blank" rel="noopener noreferrer">Digital Transport for Africa</a>',
-      'Created by <a href="https://jedidiahchibinga.wixsite.com/jedidiah-chibinga" target="_blank" rel="noopener noreferrer">Jedidiah Chibinga</a>'
-    ]
-  }),
-  'bottom-right'
-);
-
-
-map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 let tripsData = null;
 let stopsData = null;
@@ -34,46 +24,111 @@ let handledLayerClick = false;
 let originMarker = null;
 let destMarker = null;
 
-const loaderOverlay = document.getElementById('loader-overlay');
-const statusEl = document.getElementById('status');
-const resultsEl = document.getElementById('results');
-const originInput = document.getElementById('origin-input');
-const destInput = document.getElementById('dest-input');
-const stopsDatalist = document.getElementById('stops-datalist');
-const sidebarEl = document.getElementById('sidebar');
-const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
+let map = null;
+let dataReady = false;
+let styleReady = false;
+let layersInitialized = false;
+let usedFallbackStyle = false;
+let dataError = false;
+let basemapTimeoutId = null;
 
-toggleSidebarBtn.addEventListener('click', () => {
-  sidebarEl.classList.toggle('collapsed');
-});
+function tryFinishInit() {
+  if (dataError || !dataReady || !styleReady || layersInitialized || !map) return;
+  layersInitialized = true;
+  clearTimeout(basemapTimeoutId);
+  initMapLayers();
+  initPopups();
+  loaderOverlay.classList.add('hidden');
+  statusEl.textContent = usedFallbackStyle
+    ? 'Basemap unavailable — transit routes & stops loaded.'
+    : 'Type a stop or click map.';
+}
 
+function useFallbackBasemap() {
+  if (styleReady || usedFallbackStyle || !map) return;
+  usedFallbackStyle = true;
+  clearTimeout(basemapTimeoutId);
+  map.setStyle({
+    version: 8,
+    sources: {},
+    layers: [
+      { id: 'background', type: 'background', paint: { 'background-color': '#f1f5f9' } }
+    ]
+  });
+}
 
-// 2A. Load local GeoJSON files once map loads
-map.on('load', async () => {
-  try {
-    const [tripsRes, stopsRes] = await Promise.all([
-      fetch('./data/processed_trips.geojson'),
-      fetch('./data/processed_stops.geojson')
-    ]);
-    if (!tripsRes.ok || !stopsRes.ok) {
-      throw new Error(`HTTP error loading GeoJSON (${tripsRes.status}, ${stopsRes.status})`);
+// 1. Initialize MapLibre with free OpenFreeMap vector tiles (no API token required)
+if (typeof maplibregl === 'undefined' || typeof turf === 'undefined') {
+  loaderOverlay.classList.add('hidden');
+  statusEl.textContent = 'Map libraries failed to load. Check your internet connection and reload.';
+} else {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [28.31, -15.42], // Lusaka: [longitude, latitude]
+    zoom: 12,
+    attributionControl: false
+  });
+
+  map.addControl(
+    new maplibregl.AttributionControl({
+      compact: false,
+      customAttribution: [
+        'Data: <a href="https://gitlab.com/digitaltransport/data/africa/lusaka" target="_blank" rel="noopener noreferrer">Digital Transport for Africa</a>',
+        'Created by <a href="https://jedidiahchibinga.wixsite.com/jedidiah-chibinga" target="_blank" rel="noopener noreferrer">Jedidiah Chibinga</a>'
+      ]
+    }),
+    'bottom-right'
+  );
+
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+  basemapTimeoutId = setTimeout(useFallbackBasemap, 10000);
+
+  map.on('load', () => {
+    styleReady = true;
+    tryFinishInit();
+  });
+
+  map.on('style.load', () => {
+    if (usedFallbackStyle) {
+      styleReady = true;
+      tryFinishInit();
     }
-    tripsData = await tripsRes.json();
-    stopsData = await stopsRes.json();
+  });
 
-    buildRouteStopIndex();
-    populateStopAutocomplete();
-    initMapLayers();
-    initPopups();
+  map.on('error', () => {
+    if (!styleReady && !map.isStyleLoaded()) {
+      useFallbackBasemap();
+    }
+  });
 
-    loaderOverlay.classList.add('hidden');
+  // 2A. Load local GeoJSON files in parallel with the basemap
+  (async () => {
+    try {
+      const [tripsRes, stopsRes] = await Promise.all([
+        fetch('./data/processed_trips.geojson'),
+        fetch('./data/processed_stops.geojson')
+      ]);
+      if (!tripsRes.ok || !stopsRes.ok) {
+        throw new Error(`HTTP error loading GeoJSON (${tripsRes.status}, ${stopsRes.status})`);
+      }
+      tripsData = await tripsRes.json();
+      stopsData = await stopsRes.json();
 
-    statusEl.textContent = 'Type a stop or click map.';
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Error loading GeoJSON. Run via a local server (e.g., VS Code Live Server or python -m http.server).';
-  }
-});
+      buildRouteStopIndex();
+      populateStopAutocomplete();
+      dataReady = true;
+      tryFinishInit();
+    } catch (err) {
+      console.error(err);
+      dataError = true;
+      clearTimeout(basemapTimeoutId);
+      loaderOverlay.classList.add('hidden');
+      statusEl.textContent = 'Error loading GeoJSON. Run via a local server (e.g., VS Code Live Server or python -m http.server).';
+    }
+  })();
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -294,24 +349,26 @@ function initMapLayers() {
     }
   });
 
-  map.addLayer({
-    id: 'selected-stops-labels',
-    type: 'symbol',
-    source: 'selected-stops',
-    filter: ['in', ['get', 'role'], ['literal', ['board', 'transfer', 'alight']]],
-    layout: {
-      'text-field': ['get', 'name'],
-      'text-size': 12,
-      'text-offset': [0, 1.3],
-      'text-anchor': 'top',
-      'text-font': ['Noto Sans Bold']
-    },
-    paint: {
-      'text-color': '#111827',
-      'text-halo-color': '#ffffff',
-      'text-halo-width': 2
-    }
-  });
+  if (map.getStyle() && map.getStyle().glyphs) {
+    map.addLayer({
+      id: 'selected-stops-labels',
+      type: 'symbol',
+      source: 'selected-stops',
+      filter: ['in', ['get', 'role'], ['literal', ['board', 'transfer', 'alight']]],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-size': 12,
+        'text-offset': [0, 1.3],
+        'text-anchor': 'top',
+        'text-font': ['Noto Sans Bold']
+      },
+      paint: {
+        'text-color': '#111827',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 2
+      }
+    });
+  }
 
 }
 
@@ -576,24 +633,26 @@ destInput.addEventListener('change', () => {
 });
 
 // 5B. Handle map clicks to set Origin (A) and Destination (B)
-map.on('click', (e) => {
-  if (handledLayerClick) {
-    handledLayerClick = false;
-    return;
-  }
-  clearInspectedRoute();
-  if (!routeStopIndex.length) return;
-  const lngLat = [e.lngLat.lng, e.lngLat.lat];
+if (map) {
+  map.on('click', (e) => {
+    if (handledLayerClick) {
+      handledLayerClick = false;
+      return;
+    }
+    clearInspectedRoute();
+    if (!routeStopIndex.length) return;
+    const lngLat = [e.lngLat.lng, e.lngLat.lat];
 
-  if (!originCoord || (originCoord && destCoord)) {
-    destCoord = null;
-    if (destMarker) destMarker.remove();
-    destInput.value = '';
-    setOrigin(lngLat);
-  } else {
-    setDestination(lngLat);
-  }
-});
+    if (!originCoord || (originCoord && destCoord)) {
+      destCoord = null;
+      if (destMarker) destMarker.remove();
+      destInput.value = '';
+      setOrigin(lngLat);
+    } else {
+      setDestination(lngLat);
+    }
+  });
+}
 
 document.getElementById('reset-btn').addEventListener('click', () => {
   originCoord = null;

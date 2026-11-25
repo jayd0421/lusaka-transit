@@ -329,8 +329,22 @@ button:hover {
     font-size: 13px;
   }
 
+  .controls {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 4px;
+  }
+
+  .controls > * {
+    flex-shrink: 0;
+  }
+
   .results {
+    flex: none;
+    overflow-y: visible;
     max-height: none;
+    padding-right: 0;
   }
 
   .maplibregl-popup {
@@ -344,6 +358,7 @@ button:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .toggle-btn {
